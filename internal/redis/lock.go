@@ -30,7 +30,7 @@ func (r *Redis) AddOTP(otp string, orderID string) (bool, error) {
 	return ok, err
 }
 
-// Unlock a single seat
+// nlock a single seat
 func (r *Redis) RemoveOTP(orderID string) error {
 	ctx := context.Background()
 	key := fmt.Sprintf("OTP_lock:%s", orderID)
