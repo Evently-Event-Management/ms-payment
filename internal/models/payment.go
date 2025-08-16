@@ -36,6 +36,7 @@ type Payment struct {
 }
 
 type PaymentRequest struct {
+	OrderID        string  `json:"order_id" binding:"required"`
 	MerchantID     string  `json:"merchant_id" binding:"required"`
 	Amount         float64 `json:"amount" binding:"required,gt=0"`
 	Currency       string  `json:"currency" binding:"required,len=3"`
@@ -73,4 +74,9 @@ type RefundRequest struct {
 
 var Req struct {
 	Email string `json:"email" binding:"required,email"`
+}
+
+type ValidateOTPRequest struct {
+	OrderID string `json:"order_id" binding:"required"`
+	OTP     string `json:"otp" binding:"required"`
 }
