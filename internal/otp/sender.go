@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"log"
 	"net/smtp"
+	"payment-gateway/internal/config"
 )
 
 func SendEmailOTP(toEmail, otp string) {
-	from := "isurumuniwije@gmail.com" // e.g., yourcompany@gmail.com
-	password := "yotp eehv mcnq osnh" // App password for Gmail
-	smtpHost := "smtp.gmail.com"
-	smtpPort := "587"
+	cfg := config.Load()
+	from := cfg.Email.SMTPUsername
+	password := cfg.Email.SMTPPassword
+	smtpHost := cfg.Email.SMTPHost
+	smtpPort := cfg.Email.SMTPPort
 
 	if from == "" || password == "" {
 		log.Fatal("SMTP configuration environment variables are missing")

@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	Server   ServerConfig
+	Email    EmailConfig
 	Redis    RedisConfig // Assuming RedisConfig is defined in the redis package
 	Kafka    KafkaConfig
 	Database DatabaseConfig // Added database configuration
@@ -49,6 +50,13 @@ type TopicConfig struct {
 	PaymentRefunded string
 }
 
+type EmailConfig struct {
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUsername string
+	SMTPPassword string
+}
+
 func Load() *Config {
 	kafkaEnabled := getEnvBool("KAFKA_ENABLED", true)
 	mockMode := getEnvBool("KAFKA_MOCK_MODE", false)
@@ -60,7 +68,12 @@ func Load() *Config {
 			WriteTimeout: 15 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		},
-
+		Email: EmailConfig{
+			SMTPHost:     getEnv("SMTP_HOST", "smtp.gmail.com"),
+			SMTPPort:     getEnv("SMTP_PORT", "587"),
+			SMTPUsername: getEnv("SMTP_USERNAME", "isurumuniwije@gmail.com"),
+			SMTPPassword: getEnv("SMTP_PASSWORD", "yotp eehv mcnq osnh"),
+		},
 		Redis: RedisConfig{
 			Addr: getEnv("REDIS_ADDR", "localhost:6379"),
 		},

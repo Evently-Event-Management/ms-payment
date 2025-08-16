@@ -26,7 +26,10 @@ var log *logger.Logger
 func main() {
 	log = logger.NewLogger()
 	defer log.Close()
-
+	//err := godotenv.Load()
+	//if err != nil {
+	//	log.Fatal("ENV", "Error loading .env file")
+	//}
 	log.LogProcess("STARTUP", "Payment Gateway starting up...")
 	log.Info("SYSTEM", "Initializing components...")
 

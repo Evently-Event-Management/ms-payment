@@ -12,7 +12,10 @@ require (
 	golang.org/x/time v0.5.0
 )
 
-require github.com/go-redis/redis/v8 v8.11.5
+require (
+	github.com/go-redis/redis/v8 v8.11.5
+	github.com/joho/godotenv v1.5.1
+)
 
 require (
 	github.com/bytedance/sonic v1.9.1 // indirect
