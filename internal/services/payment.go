@@ -25,17 +25,25 @@ var (
 	ErrPaymentNotRefundable = errors.New("payment not refundable")
 )
 
+type RedisLock interface {
+	AddOTP(otp, orderID string) (bool, error)
+	RemoveOTP(orderID string) error
+	IsOTPLocked(orderID string) (bool, error)
+	GetOTP(orderID string) (string, error)
+}
 type PaymentService struct {
 	store    storage.Store
 	producer *kafka.Producer
-	log      *logger.Logger // Added logger to service
+	log      *logger.Logger
+	redis    RedisLock // Added logger to service
 }
 
-func NewPaymentService(store storage.Store, producer *kafka.Producer, log *logger.Logger) *PaymentService {
+func NewPaymentService(store storage.Store, producer *kafka.Producer, log *logger.Logger, redis RedisLock) *PaymentService {
 	return &PaymentService{
 		store:    store,
 		producer: producer,
 		log:      log,
+		redis:    redis,
 	}
 }
 
@@ -44,18 +52,27 @@ func (s *PaymentService) OtpSender(email string) {
 	// Simulate sending OTP
 	otp, _ := otp2.GenerateOTP()
 	otp2.SendEmailOTP(email, otp)
-	// Here you would integrate with an email service to send the OTP
-	// For now, we just log it
+
 	s.log.Info("OTP", fmt.Sprintf("Sent OTP to %s: %s", email, otp))
 
 }
 func (s *PaymentService) ProcessPayment(ctx context.Context, req *models.PaymentRequest) (*models.Payment, error) {
 	s.log.LogPayment("INIT", "new", fmt.Sprintf("Processing payment for merchant %s, amount: %.2f %s",
 		req.MerchantID, req.Amount, req.Currency))
-
+	otp, _ := otp2.GenerateOTP()
+	otp2.SendEmailOTP("isurumuni.22@cse.mrt.ac.lk", otp)
+	ok, err := s.redis.AddOTP(otp, req.OrderID)
+	if err != nil {
+		fmt.Printf("Error locking seats: %v\n", err)
+		return nil, fmt.Errorf("redis error: %w", err)
+	}
+	if !ok {
+		fmt.Println("One or more seats are already locked. Aborting order.")
+		return nil, fmt.Errorf("one or more seats already locked")
+	}
 	// Create payment record
 	payment := &models.Payment{
-		ID:             utils.GenerateID(),
+		ID:             req.OrderID,
 		MerchantID:     req.MerchantID,
 		Amount:         req.Amount,
 		Currency:       req.Currency,
@@ -120,6 +137,7 @@ func (s *PaymentService) processPaymentAsync(ctx context.Context, payment *model
 		s.store.SavePayment(payment)
 		s.log.LogPayment("COMPLETED", payment.ID, fmt.Sprintf("Payment completed with transaction ID: %s", payment.TransactionID))
 		s.publishPaymentEvent("payment.success", payment)
+
 	} else {
 		s.log.LogPayment("DECLINED", payment.ID, "Payment declined by gateway")
 		s.updatePaymentStatus(payment, models.StatusFailed, "Payment declined by bank")
@@ -293,4 +311,37 @@ func (s *PaymentService) maskCardNumber(cardNumber string) string {
 		return cardNumber
 	}
 	return "****-****-****-" + cardNumber[len(cardNumber)-4:]
+}
+
+func (s *PaymentService) VerifyOTP(orderID string, otp string) bool {
+	s.log.Debug("OTP", fmt.Sprintf("🔍 Starting OTP verification for orderID=%s with provided OTP=%s", orderID, otp))
+
+	lockedOTP, err := s.redis.GetOTP(orderID)
+	if err != nil {
+		s.log.Error("OTP", fmt.Sprintf("❌ Error fetching OTP for order %s: %v", orderID, err))
+		return false
+	}
+
+	s.log.Debug("OTP", fmt.Sprintf("📦 Redis returned OTP for orderID=%s: %s", orderID, lockedOTP))
+
+	if lockedOTP == "" {
+		s.log.Warn("OTP", fmt.Sprintf("⚠️ No OTP found in Redis for order %s", orderID))
+		return false
+	}
+
+	if lockedOTP == otp {
+		s.log.Info("OTP", fmt.Sprintf("✅ OTP matched for order %s. Provided=%s, Stored=%s", orderID, otp, lockedOTP))
+
+		err := s.redis.RemoveOTP(orderID)
+		if err != nil {
+			s.log.Error("OTP", fmt.Sprintf("❌ Failed to remove OTP for order %s: %v", orderID, err))
+			return false
+		}
+
+		s.log.Debug("OTP", fmt.Sprintf("🗑 OTP removed from Redis for order %s", orderID))
+		return true
+	}
+
+	s.log.Warn("OTP", fmt.Sprintf("🚫 OTP mismatch for order %s. Provided=%s, Stored=%s", orderID, otp, lockedOTP))
+	return false
 }

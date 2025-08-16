@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	Server   ServerConfig
+	Redis    RedisConfig // Assuming RedisConfig is defined in the redis package
 	Kafka    KafkaConfig
 	Database DatabaseConfig // Added database configuration
 }
@@ -19,6 +20,9 @@ type ServerConfig struct {
 	IdleTimeout  time.Duration
 }
 
+type RedisConfig struct {
+	Addr string
+}
 type KafkaConfig struct {
 	Brokers  []string
 	GroupID  string
@@ -56,6 +60,11 @@ func Load() *Config {
 			WriteTimeout: 15 * time.Second,
 			IdleTimeout:  60 * time.Second,
 		},
+
+		Redis: RedisConfig{
+			Addr: getEnv("REDIS_ADDR", "localhost:6379"),
+		},
+
 		Database: DatabaseConfig{
 			Host:         getEnv("DB_HOST", "localhost"),
 			Port:         getEnv("DB_PORT", "3306"),
@@ -104,4 +113,12 @@ func getEnvInt(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+func getRedisAddr() string {
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379" // Default Redis address
+	}
+	return redisAddr
 }

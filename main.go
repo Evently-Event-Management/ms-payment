@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/go-redis/redis/v8"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"payment-gateway/internal/kafka"
 	"payment-gateway/internal/logger"
 	"payment-gateway/internal/middleware"
+	rediswrap "payment-gateway/internal/redis"
 	"payment-gateway/internal/services"
 	"payment-gateway/internal/storage"
 )
@@ -57,9 +59,14 @@ func main() {
 	}
 	defer kafkaConsumer.Close()
 	log.LogKafka("INIT", "consumer", "Kafka consumer initialized successfully")
+	redisAddr := os.Getenv("REDIS_ADDR")
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
 
+	log.LogProcess("SERVICE", " Redis connection successful")
 	// Initialize services
-	paymentService := services.NewPaymentService(store, kafkaProducer, log)
+	paymentService := services.NewPaymentService(store, kafkaProducer, log, rediswrap.NewRedis(redisClient))
 	log.LogProcess("SERVICE", "Payment service initialized")
 
 	// Initialize handlers
@@ -147,6 +154,7 @@ func setupRouter(paymentHandler *handlers.PaymentHandler) *gin.Engine {
 			payments.GET("/:id/status", paymentHandler.GetPaymentStatus)
 			payments.POST("/:id/refund", paymentHandler.RefundPayment)
 			payments.POST("/OTP", paymentHandler.OTP)
+			payments.POST("/validate", paymentHandler.ValidateOTP)
 		}
 	}
 

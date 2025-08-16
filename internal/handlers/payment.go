@@ -151,8 +151,7 @@ func (h *PaymentHandler) RefundPayment(c *gin.Context) {
 }
 
 func (h *PaymentHandler) validatePaymentRequest(req *models.PaymentRequest) error {
-	// Add custom validation logic here
-	// For example: validate card number format, expiry date, etc.
+
 	return nil
 }
 
@@ -165,4 +164,20 @@ func (h *PaymentHandler) OTP(c *gin.Context) {
 
 	h.paymentService.OtpSender(models.Req.Email)
 	c.JSON(http.StatusOK, utils.SuccessResponse("OTP sent Successfully.", "TTl= 5min"))
+}
+
+func (h *PaymentHandler) ValidateOTP(c *gin.Context) {
+	var req models.ValidateOTPRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid OTP request", err.Error()))
+		return
+	}
+
+	if ok := h.paymentService.VerifyOTP(req.OrderID, req.OTP); !ok {
+
+		c.JSON(http.StatusUnauthorized, utils.ErrorResponse("Invalid OTP", "The OTP provided is incorrect or expired. Please try again."))
+		return
+	}
+
+	c.JSON(http.StatusOK, utils.SuccessResponse("OTP validated successfully", nil))
 }

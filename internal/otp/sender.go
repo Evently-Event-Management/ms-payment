@@ -15,7 +15,6 @@ func SendEmailOTP(toEmail, otp string) {
 	if from == "" || password == "" {
 		log.Fatal("SMTP configuration environment variables are missing")
 	}
-
 	// HTML Styled Message
 	message := []byte(fmt.Sprintf(
 		"Subject: 🎟 Your Eventify OTP Code\r\n"+
