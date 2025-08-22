@@ -3,10 +3,11 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/logger"
 	"payment-gateway/internal/models"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type MySQLStore struct {
@@ -56,30 +57,17 @@ func (s *MySQLStore) initTables() error {
 	s.log.LogDatabase("MIGRATE", "mysql", "Creating payments table if not exists")
 
 	query := `
-	CREATE TABLE IF NOT EXISTS payments (
-		id VARCHAR(36) PRIMARY KEY,
-		merchant_id VARCHAR(255) NOT NULL,
-		amount DECIMAL(10,2) NOT NULL,
-		currency VARCHAR(3) NOT NULL,
-		status VARCHAR(50) NOT NULL,
-		card_number VARCHAR(255) NOT NULL,
-		cardholder_name VARCHAR(255) NOT NULL,
-		expiry_month INT NOT NULL,
-		expiry_year INT NOT NULL,
-		cvv VARCHAR(4) NOT NULL,
-		transaction_id VARCHAR(255),
-		failure_reason TEXT,
-		refunded_amount DECIMAL(10,2) DEFAULT 0.00,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		processed_at TIMESTAMP NULL,
-		
-		INDEX idx_merchant_id (merchant_id),
-		INDEX idx_status (status),
-		INDEX idx_created_at (created_at),
-		INDEX idx_transaction_id (transaction_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-	`
+    CREATE TABLE IF NOT EXISTS payments (
+        payment_id VARCHAR(36) PRIMARY KEY,
+        order_id VARCHAR(36) NOT NULL,
+        status VARCHAR(50) NOT NULL,
+        price DECIMAL(10,2) NOT NULL,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_order_id (order_id),
+        INDEX idx_status (status),
+        INDEX idx_date (date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `
 
 	if _, err := s.db.Exec(query); err != nil {
 		return fmt.Errorf("failed to create payments table: %w", err)
@@ -89,50 +77,41 @@ func (s *MySQLStore) initTables() error {
 	return nil
 }
 
+// Update SavePayment to match new fields
 func (s *MySQLStore) SavePayment(payment *models.Payment) error {
-	s.log.LogDatabase("INSERT", "mysql", fmt.Sprintf("Saving payment %s", payment.ID))
+	s.log.LogDatabase("INSERT", "mysql", fmt.Sprintf("Saving payment %s", payment.PaymentID))
 
 	query := `
-	INSERT INTO payments (
-		id, merchant_id, amount, currency, status, card_number, cardholder_name,
-		expiry_month, expiry_year, cvv, transaction_id, created_at, updated_at, processed_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
+    INSERT INTO payments (
+        payment_id, order_id, status, price, date
+    ) VALUES (?, ?, ?, ?, ?)
+    `
 
 	_, err := s.db.Exec(query,
-		payment.ID, payment.MerchantID, payment.Amount, payment.Currency,
-		payment.Status, payment.CardNumber, payment.CardHolderName,
-		payment.ExpiryMonth, payment.ExpiryYear, payment.CVV,
-		payment.TransactionID, payment.CreatedAt, payment.UpdatedAt, payment.ProcessedAt,
+		payment.PaymentID, payment.OrderID, payment.Status, payment.Price, payment.Date,
 	)
 
 	if err != nil {
-		s.log.Error("DATABASE", fmt.Sprintf("Failed to save payment %s: %s", payment.ID, err.Error()))
+		s.log.Error("DATABASE", fmt.Sprintf("Failed to save payment %s: %s", payment.PaymentID, err.Error()))
 		return fmt.Errorf("failed to save payment: %w", err)
 	}
 
-	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Payment %s saved successfully", payment.ID))
+	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Payment %s saved successfully", payment.PaymentID))
 	return nil
 }
 
+// Update GetPayment to match new fields
 func (s *MySQLStore) GetPayment(id string) (*models.Payment, error) {
 	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Fetching payment %s", id))
 
 	query := `
-	SELECT id, merchant_id, amount, currency, status, card_number, cardholder_name,
-		   expiry_month, expiry_year, cvv, transaction_id,
-		   created_at, updated_at, processed_at
-	FROM payments WHERE id = ?
-	`
+    SELECT payment_id, order_id, status, price, date
+    FROM payments WHERE payment_id = ?
+    `
 
 	payment := &models.Payment{}
-	var processedAt sql.NullTime
-
 	err := s.db.QueryRow(query, id).Scan(
-		&payment.ID, &payment.MerchantID, &payment.Amount, &payment.Currency,
-		&payment.Status, &payment.CardNumber, &payment.CardHolderName,
-		&payment.ExpiryMonth, &payment.ExpiryYear, &payment.CVV,
-		&payment.TransactionID, &payment.CreatedAt, &payment.UpdatedAt, &processedAt,
+		&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.Date,
 	)
 
 	if err != nil {
@@ -144,51 +123,46 @@ func (s *MySQLStore) GetPayment(id string) (*models.Payment, error) {
 		return nil, fmt.Errorf("failed to get payment: %w", err)
 	}
 
-	if processedAt.Valid {
-		payment.ProcessedAt = &processedAt.Time
-	}
-
 	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Payment %s fetched successfully", id))
 	return payment, nil
 }
 
+// Update UpdatePayment to match new fields
 func (s *MySQLStore) UpdatePayment(payment *models.Payment) error {
-	s.log.LogDatabase("UPDATE", "mysql", fmt.Sprintf("Updating payment %s", payment.ID))
+	s.log.LogDatabase("UPDATE", "mysql", fmt.Sprintf("Updating payment %s", payment.PaymentID))
 
 	query := `
-	UPDATE payments SET
-		status = ?, transaction_id = ?, updated_at = ?, processed_at = ?
-	WHERE id = ?
-	`
+    UPDATE payments SET
+        order_id = ?, status = ?, price = ?, date = ?
+    WHERE payment_id = ?
+    `
 
 	_, err := s.db.Exec(query,
-		payment.Status, payment.TransactionID,
-		payment.UpdatedAt, payment.ProcessedAt, payment.ID,
+		payment.OrderID, payment.Status, payment.Price, payment.Date, payment.PaymentID,
 	)
 
 	if err != nil {
-		s.log.Error("DATABASE", fmt.Sprintf("Failed to update payment %s: %s", payment.ID, err.Error()))
+		s.log.Error("DATABASE", fmt.Sprintf("Failed to update payment %s: %s", payment.PaymentID, err.Error()))
 		return fmt.Errorf("failed to update payment: %w", err)
 	}
 
-	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Payment %s updated successfully", payment.ID))
+	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Payment %s updated successfully", payment.PaymentID))
 	return nil
 }
 
-func (s *MySQLStore) ListPayments(merchantID string, limit, offset int) ([]*models.Payment, error) {
-	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Listing payments for merchant %s (limit: %d, offset: %d)", merchantID, limit, offset))
+// Update ListPayments to match new fields
+func (s *MySQLStore) ListPayments(orderID string, limit, offset int) ([]*models.Payment, error) {
+	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Listing payments for order %s (limit: %d, offset: %d)", orderID, limit, offset))
 
 	query := `
-	SELECT id, merchant_id, amount, currency, status, card_number, cardholder_name,
-		   expiry_month, expiry_year, cvv, transaction_id,
-		   created_at, updated_at, processed_at
-	FROM payments 
-	WHERE merchant_id = ? 
-	ORDER BY created_at DESC 
-	LIMIT ? OFFSET ?
-	`
+    SELECT payment_id, order_id, status, price, date
+    FROM payments 
+    WHERE order_id = ? 
+    ORDER BY date DESC 
+    LIMIT ? OFFSET ?
+    `
 
-	rows, err := s.db.Query(query, merchantID, limit, offset)
+	rows, err := s.db.Query(query, orderID, limit, offset)
 	if err != nil {
 		s.log.Error("DATABASE", fmt.Sprintf("Failed to list payments: %s", err.Error()))
 		return nil, fmt.Errorf("failed to list payments: %w", err)
@@ -198,22 +172,13 @@ func (s *MySQLStore) ListPayments(merchantID string, limit, offset int) ([]*mode
 	var payments []*models.Payment
 	for rows.Next() {
 		payment := &models.Payment{}
-		var processedAt sql.NullTime
-
 		err := rows.Scan(
-			&payment.ID, &payment.MerchantID, &payment.Amount, &payment.Currency,
-			&payment.Status, &payment.CardNumber, &payment.CardHolderName,
-			&payment.ExpiryMonth, &payment.ExpiryYear, &payment.CVV,
-			&payment.TransactionID, &payment.CreatedAt, &payment.UpdatedAt, &processedAt,
+			&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.Date,
 		)
 
 		if err != nil {
 			s.log.Error("DATABASE", fmt.Sprintf("Failed to scan payment row: %s", err.Error()))
 			return nil, fmt.Errorf("failed to scan payment: %w", err)
-		}
-
-		if processedAt.Valid {
-			payment.ProcessedAt = &processedAt.Time
 		}
 
 		payments = append(payments, payment)
@@ -224,7 +189,7 @@ func (s *MySQLStore) ListPayments(merchantID string, limit, offset int) ([]*mode
 		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
-	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Listed %d payments for merchant %s", len(payments), merchantID))
+	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Listed %d payments for order %s", len(payments), orderID))
 	return payments, nil
 }
 
@@ -235,4 +200,30 @@ func (s *MySQLStore) Close() error {
 
 func (s *MySQLStore) HealthCheck() error {
 	return s.db.Ping()
+}
+
+func (s *MySQLStore) GetTicketByOrderID(OrderID string) (*models.Payment, error) {
+	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Fetching payment %s", OrderID))
+
+	query := `
+    SELECT payment_id, order_id, status, price, date
+    FROM payments WHERE order_id = ?
+    `
+
+	payment := &models.Payment{}
+	err := s.db.QueryRow(query, OrderID).Scan(
+		&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.Date,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			s.log.LogDatabase("NOT_FOUND", "mysql", fmt.Sprintf("Payment not found for OrderID %s", OrderID))
+			return nil, fmt.Errorf("payment not found")
+		}
+		s.log.Error("DATABASE", fmt.Sprintf("Failed to get payment %s: %s", OrderID, err.Error()))
+		return nil, fmt.Errorf("failed to get payment: %w", err)
+	}
+
+	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Payment %s fetched successfully for OrderID %s", OrderID, OrderID))
+	return payment, nil
 }

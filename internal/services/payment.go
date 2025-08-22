@@ -12,7 +12,6 @@ import (
 	"payment-gateway/internal/logger"
 	"payment-gateway/internal/models"
 	"payment-gateway/internal/storage"
-	"payment-gateway/internal/utils"
 )
 
 var (
@@ -57,89 +56,66 @@ func (s *PaymentService) OtpSender(email string) {
 
 }
 func (s *PaymentService) ProcessPayment(ctx context.Context, req *models.PaymentRequest) (*models.Payment, error) {
-	s.log.LogPayment("INIT", "new", fmt.Sprintf("Processing payment for merchant %s, amount: %.2f %s",
-		req.MerchantID, req.Amount, req.Currency))
+	s.log.LogPayment("INIT", "new", fmt.Sprintf("Processing payment for order %s, price: %.2f",
+		req.OrderID, req.Price))
+
 	otp, _ := otp2.GenerateOTP()
 	otp2.SendEmailOTP("isurumuni.22@cse.mrt.ac.lk", otp)
 	ok, err := s.redis.AddOTP(otp, req.OrderID)
 	if err != nil {
-		fmt.Printf("Error locking seats: %v\n", err)
+		fmt.Printf("Error locking OTP: %v\n", err)
 		return nil, fmt.Errorf("redis error: %w", err)
 	}
 	if !ok {
-		fmt.Println("One or more seats are already locked. Aborting order.")
-		return nil, fmt.Errorf("one or more seats already locked")
-	}
-	// Create payment record
-	payment := &models.Payment{
-		ID:             req.OrderID,
-		MerchantID:     req.MerchantID,
-		Amount:         req.Amount,
-		Currency:       req.Currency,
-		Status:         models.StatusPending,
-		PaymentMethod:  req.PaymentMethod,
-		CardNumber:     s.maskCardNumber(req.CardNumber),
-		CardHolderName: req.CardHolderName,
-		ExpiryMonth:    req.ExpiryMonth,
-		ExpiryYear:     req.ExpiryYear,
-		Description:    req.Description,
-		CallbackURL:    req.CallbackURL,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		fmt.Println("OTP already locked for this order. Aborting payment.")
+		return nil, fmt.Errorf("OTP already locked")
 	}
 
-	s.log.LogPayment("CREATE", payment.ID, fmt.Sprintf("Payment record created with status: %s", payment.Status))
+	// Create payment record
+	payment := &models.Payment{
+		PaymentID: req.PaymentID,
+		OrderID:   req.OrderID,
+		Status:    models.StatusPending,
+		Price:     req.Price,
+		Date:      time.Now(),
+	}
+
+	s.log.LogPayment("CREATE", payment.PaymentID, fmt.Sprintf("Payment record created with status: %s", payment.Status))
 
 	// Save payment to storage
 	if err := s.store.SavePayment(payment); err != nil {
-		s.log.Error("PAYMENT", fmt.Sprintf("Failed to save payment %s: %v", payment.ID, err))
+		s.log.Error("PAYMENT", fmt.Sprintf("Failed to save payment %s: %v", payment.PaymentID, err))
 		return nil, fmt.Errorf("failed to save payment: %w", err)
 	}
 
-	s.log.LogDatabase("SAVE", "payments", fmt.Sprintf("Payment %s saved successfully", payment.ID))
+	s.log.LogDatabase("SAVE", "payments", fmt.Sprintf("Payment %s saved successfully", payment.PaymentID))
 
 	// Simulate payment processing
 	go s.processPaymentAsync(ctx, payment, req)
 
-	s.log.LogPayment("ASYNC", payment.ID, "Payment processing started asynchronously")
+	s.log.LogPayment("ASYNC", payment.PaymentID, "Payment processing started asynchronously")
 	return payment, nil
 }
 
 func (s *PaymentService) processPaymentAsync(ctx context.Context, payment *models.Payment, req *models.PaymentRequest) {
-	s.log.LogProcess("ASYNC_PAYMENT", fmt.Sprintf("Starting async processing for payment %s", payment.ID))
+	s.log.LogProcess("ASYNC_PAYMENT", fmt.Sprintf("Starting async processing for payment %s", payment.PaymentID))
 
 	// Simulate processing delay
 	processingTime := time.Duration(rand.Intn(3)+1) * time.Second
-	s.log.LogPayment("PROCESSING", payment.ID, fmt.Sprintf("Simulating processing delay: %v", processingTime))
+	s.log.LogPayment("PROCESSING", payment.PaymentID, fmt.Sprintf("Simulating processing delay: %v", processingTime))
 	time.Sleep(processingTime)
-
-	// Validate card details
-	s.log.LogPayment("VALIDATE", payment.ID, "Validating card details...")
-	if err := s.validateCard(req); err != nil {
-		s.log.LogPayment("VALIDATION_FAILED", payment.ID, fmt.Sprintf("Card validation failed: %v", err))
-		s.updatePaymentStatus(payment, models.StatusFailed, err.Error())
-		s.publishPaymentEvent("payment.failed", payment)
-		return
-	}
-
-	s.log.LogPayment("VALIDATION_SUCCESS", payment.ID, "Card validation successful")
 
 	// Simulate payment gateway response
 	if s.shouldPaymentSucceed(req) {
-		s.log.LogPayment("SUCCESS", payment.ID, "Payment approved by gateway")
+		s.log.LogPayment("SUCCESS", payment.PaymentID, "Payment approved by gateway")
 
 		payment.Status = models.StatusSuccess
-		payment.TransactionID = utils.GenerateTransactionID()
-		now := time.Now()
-		payment.ProcessedAt = &now
-		payment.UpdatedAt = now
+		payment.Date = time.Now()
 
 		s.store.SavePayment(payment)
-		s.log.LogPayment("COMPLETED", payment.ID, fmt.Sprintf("Payment completed with transaction ID: %s", payment.TransactionID))
-		s.publishPaymentEvent("payment.success", payment)
 
 	} else {
-		s.log.LogPayment("DECLINED", payment.ID, "Payment declined by gateway")
+		s.log.LogPayment("DECLINED", payment.PaymentID, "Payment declined by gateway")
 		s.updatePaymentStatus(payment, models.StatusFailed, "Payment declined by bank")
 		s.publishPaymentEvent("payment.failed", payment)
 	}
@@ -172,27 +148,25 @@ func (s *PaymentService) RefundPayment(ctx context.Context, paymentID string, am
 		return nil, ErrPaymentNotRefundable
 	}
 
-	refundAmount := payment.Amount
 	if amount != nil {
-		if *amount <= 0 || *amount > payment.Amount {
+		if *amount <= 0 || *amount > payment.Price {
 			s.log.LogPayment("REFUND_FAILED", paymentID, fmt.Sprintf("Invalid refund amount: %.2f", *amount))
 			return nil, ErrInvalidRefundAmount
 		}
-		refundAmount = *amount
 	}
 
-	s.log.LogPayment("REFUND_PROCESSING", paymentID, fmt.Sprintf("Processing refund of %.2f %s", refundAmount, payment.Currency))
+	s.log.LogPayment("REFUND_PROCESSING", paymentID, fmt.Sprintf("Processing refund of %.2f", payment.Price))
 
 	// Process refund
 	payment.Status = models.StatusRefunded
-	payment.UpdatedAt = time.Now()
+	payment.Date = time.Now()
 
 	if err := s.store.SavePayment(payment); err != nil {
 		s.log.Error("PAYMENT", fmt.Sprintf("Failed to save refund for payment %s: %v", paymentID, err))
 		return nil, fmt.Errorf("failed to save refund: %w", err)
 	}
 
-	s.log.LogPayment("REFUND_SUCCESS", paymentID, fmt.Sprintf("Refund completed successfully: %.2f %s", refundAmount, payment.Currency))
+	s.log.LogPayment("REFUND_SUCCESS", paymentID, "Refund completed successfully")
 
 	// Publish refund event
 	s.publishPaymentEvent("payment.refunded", payment)
@@ -216,59 +190,24 @@ func (s *PaymentService) ProcessPaymentEvent(event *models.PaymentEvent) error {
 }
 
 func (s *PaymentService) handlePaymentCreated(payment *models.Payment) error {
-	s.log.LogProcess("EVENT_HANDLER", fmt.Sprintf("Handling payment created event for: %s", payment.ID))
+	s.log.LogProcess("EVENT_HANDLER", fmt.Sprintf("Handling payment created event for: %s", payment.PaymentID))
 	// Process payment created event
-	// This could trigger additional processing, notifications, etc.
 	return nil
 }
 
 func (s *PaymentService) handleWebhookEvent(payment *models.Payment) error {
-	s.log.LogProcess("WEBHOOK", fmt.Sprintf("Handling webhook event for payment: %s", payment.ID))
+	s.log.LogProcess("WEBHOOK", fmt.Sprintf("Handling webhook event for payment: %s", payment.PaymentID))
 	// Handle webhook events from external payment processors
 	return nil
 }
 
-func (s *PaymentService) validateCard(req *models.PaymentRequest) error {
-	s.log.Debug("VALIDATION", fmt.Sprintf("Validating card ending in: %s", req.CardNumber[len(req.CardNumber)-4:]))
-
-	// Simulate card validation
-	if len(req.CardNumber) < 13 || len(req.CardNumber) > 19 {
-		return ErrInvalidCard
-	}
-
-	// Check expiry date
-	now := time.Now()
-	if req.ExpiryYear < now.Year() || (req.ExpiryYear == now.Year() && req.ExpiryMonth < int(now.Month())) {
-		return ErrCardExpired
-	}
-
-	// Simulate random card validation failures
-	if rand.Float32() < 0.05 { // 5% chance of invalid card
-		return ErrInvalidCard
-	}
-
-	return nil
-}
-
 func (s *PaymentService) shouldPaymentSucceed(req *models.PaymentRequest) bool {
-	// Simulate payment success/failure based on various factors
-
-	// Always fail for specific test card numbers
-	testFailCards := []string{"4000000000000002", "4000000000000010"}
-	for _, card := range testFailCards {
-		if req.CardNumber == card {
-			s.log.LogPayment("TEST_CARD", "test", fmt.Sprintf("Using test failure card: %s", card))
-			return false
-		}
-	}
-
-	// Simulate insufficient funds for large amounts
-	if req.Amount > 10000 {
+	// Simulate payment success/failure
+	if req.Price > 10000 {
 		success := rand.Float32() > 0.3 // 70% failure rate for large amounts
-		s.log.LogPayment("LARGE_AMOUNT", "test", fmt.Sprintf("Large amount %.2f, success: %t", req.Amount, success))
+		s.log.LogPayment("LARGE_AMOUNT", "test", fmt.Sprintf("Large amount %.2f, success: %t", req.Price, success))
 		return success
 	}
-
 	// General success rate of 95%
 	success := rand.Float32() > 0.05
 	s.log.Debug("PAYMENT", fmt.Sprintf("Payment simulation result: %t", success))
@@ -276,33 +215,28 @@ func (s *PaymentService) shouldPaymentSucceed(req *models.PaymentRequest) bool {
 }
 
 func (s *PaymentService) updatePaymentStatus(payment *models.Payment, status models.PaymentStatus, errorMsg string) {
-	s.log.LogPayment("STATUS_UPDATE", payment.ID, fmt.Sprintf("Updating status from %s to %s", payment.Status, status))
+	s.log.LogPayment("STATUS_UPDATE", payment.PaymentID, fmt.Sprintf("Updating status from %s to %s", payment.Status, status))
 
 	payment.Status = status
-	payment.UpdatedAt = time.Now()
-	if errorMsg != "" {
-		payment.ErrorMessage = errorMsg
-		s.log.LogPayment("ERROR_SET", payment.ID, fmt.Sprintf("Error message: %s", errorMsg))
-	}
+	payment.Date = time.Now()
 	s.store.SavePayment(payment)
 }
 
 func (s *PaymentService) publishPaymentEvent(eventType string, payment *models.Payment) {
-	s.log.LogKafka("PUBLISH", "payment-events", fmt.Sprintf("Publishing %s event for payment %s", eventType, payment.ID))
+	s.log.LogKafka("PUBLISH", "payment-events", fmt.Sprintf("Publishing %s event for payment %s", eventType, payment.PaymentID))
 
 	event := &models.PaymentEvent{
 		Type:      eventType,
-		PaymentID: payment.ID,
+		PaymentID: payment.PaymentID,
 		Payment:   payment,
 		Timestamp: time.Now(),
 	}
 
 	if err := s.producer.PublishPaymentEvent(event); err != nil {
-		s.log.Error("KAFKA", fmt.Sprintf("Failed to publish payment event %s for payment %s: %v", eventType, payment.ID, err))
-		// In production, you might want to implement retry logic or dead letter queue
-		s.log.LogProcess("FALLBACK", fmt.Sprintf("Payment %s processed successfully despite Kafka publish failure", payment.ID))
+		s.log.Error("KAFKA", fmt.Sprintf("Failed to publish payment event %s for payment %s: %v", eventType, payment.PaymentID, err))
+		s.log.LogProcess("FALLBACK", fmt.Sprintf("Payment %s processed successfully despite Kafka publish failure", payment.PaymentID))
 	} else {
-		s.log.LogKafka("PUBLISHED", "payment-events", fmt.Sprintf("Successfully published %s event for payment %s", eventType, payment.ID))
+		s.log.LogKafka("PUBLISHED", "payment-events", fmt.Sprintf("Successfully published %s event for payment %s", eventType, payment.PaymentID))
 	}
 }
 
@@ -315,10 +249,19 @@ func (s *PaymentService) maskCardNumber(cardNumber string) string {
 
 func (s *PaymentService) VerifyOTP(orderID string, otp string) bool {
 	s.log.Debug("OTP", fmt.Sprintf("🔍 Starting OTP verification for orderID=%s with provided OTP=%s", orderID, otp))
-
+	payment, err := s.store.GetTicketByOrderID(orderID)
+	if err != nil {
+		s.log.Error("DATABASE", fmt.Sprintf("Failed to get payment for order %s: %v", orderID, err))
+		s.publishPaymentEvent("otp.failed", payment)
+		_ = s.redis.RemoveOTP(orderID)
+		return false
+	}
 	lockedOTP, err := s.redis.GetOTP(orderID)
 	if err != nil {
 		s.log.Error("OTP", fmt.Sprintf("❌ Error fetching OTP for order %s: %v", orderID, err))
+		s.handleOTPFail(orderID)
+		s.publishPaymentEvent("otp.failed", payment)
+		_ = s.redis.RemoveOTP(orderID)
 		return false
 	}
 
@@ -326,22 +269,41 @@ func (s *PaymentService) VerifyOTP(orderID string, otp string) bool {
 
 	if lockedOTP == "" {
 		s.log.Warn("OTP", fmt.Sprintf("⚠️ No OTP found in Redis for order %s", orderID))
+		s.publishPaymentEvent("otp.failed", payment)
+		s.handleOTPFail(orderID)
+		_ = s.redis.RemoveOTP(orderID)
 		return false
 	}
 
 	if lockedOTP == otp {
 		s.log.Info("OTP", fmt.Sprintf("✅ OTP matched for order %s. Provided=%s, Stored=%s", orderID, otp, lockedOTP))
 
-		err := s.redis.RemoveOTP(orderID)
+		payment.Status = models.StatusSuccess
+		err = s.store.UpdatePayment(payment)
 		if err != nil {
-			s.log.Error("OTP", fmt.Sprintf("❌ Failed to remove OTP for order %s: %v", orderID, err))
+			s.log.Error("DATABASE", fmt.Sprintf("Failed to update payment for order %s: %v", orderID, err))
+			s.handleOTPFail(orderID)
+			s.publishPaymentEvent("otp.failed", payment)
+			_ = s.redis.RemoveOTP(orderID)
 			return false
 		}
-
 		s.log.Debug("OTP", fmt.Sprintf("🗑 OTP removed from Redis for order %s", orderID))
+		s.publishPaymentEvent("otp.success", payment)
+		_ = s.redis.RemoveOTP(orderID)
 		return true
 	}
 
 	s.log.Warn("OTP", fmt.Sprintf("🚫 OTP mismatch for order %s. Provided=%s, Stored=%s", orderID, otp, lockedOTP))
+	s.handleOTPFail(orderID)
+	s.publishPaymentEvent("otp.failed", payment)
+	_ = s.redis.RemoveOTP(orderID)
 	return false
+}
+
+func (s *PaymentService) handleOTPFail(orderID string) {
+	payment, err := s.store.GetTicketByOrderID(orderID)
+	if err == nil && payment != nil {
+		payment.Status = models.StatusFailed
+		_ = s.store.UpdatePayment(payment)
+	}
 }

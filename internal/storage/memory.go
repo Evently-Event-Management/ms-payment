@@ -22,7 +22,7 @@ func (s *InMemoryStore) SavePayment(payment *models.Payment) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.payments[payment.ID] = payment
+	s.payments[payment.PaymentID] = payment
 	return nil
 }
 
@@ -42,15 +42,15 @@ func (s *InMemoryStore) UpdatePayment(payment *models.Payment) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	if _, exists := s.payments[payment.ID]; !exists {
+	if _, exists := s.payments[payment.PaymentID]; !exists {
 		return errors.New("payment not found")
 	}
 
-	s.payments[payment.ID] = payment
+	s.payments[payment.PaymentID] = payment
 	return nil
 }
 
-func (s *InMemoryStore) ListPayments(merchantID string, limit, offset int) ([]*models.Payment, error) {
+func (s *InMemoryStore) ListPayments(orderID string, limit, offset int) ([]*models.Payment, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -58,7 +58,7 @@ func (s *InMemoryStore) ListPayments(merchantID string, limit, offset int) ([]*m
 	count := 0
 
 	for _, payment := range s.payments {
-		if payment.MerchantID == merchantID {
+		if payment.OrderID == orderID {
 			if count >= offset && len(payments) < limit {
 				payments = append(payments, payment)
 			}

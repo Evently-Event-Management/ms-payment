@@ -2,14 +2,14 @@ package main
 
 import (
 	"context"
-	"github.com/go-redis/redis/v8"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
+
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/handlers"
 	"payment-gateway/internal/kafka"
@@ -18,6 +18,8 @@ import (
 	rediswrap "payment-gateway/internal/redis"
 	"payment-gateway/internal/services"
 	"payment-gateway/internal/storage"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Global logger instance
@@ -90,7 +92,7 @@ func main() {
 
 	// Create server
 	srv := &http.Server{
-		Addr:         cfg.Server.Port,
+		Addr:         ":8085",
 		Handler:      router,
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,

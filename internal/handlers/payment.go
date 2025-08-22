@@ -4,10 +4,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"payment-gateway/internal/models"
 	"payment-gateway/internal/services"
 	"payment-gateway/internal/utils"
+
+	"github.com/gin-gonic/gin"
 )
 
 type PaymentHandler struct {
@@ -36,29 +37,16 @@ func (h *PaymentHandler) ProcessPayment(c *gin.Context) {
 
 	payment, err := h.paymentService.ProcessPayment(c.Request.Context(), &req)
 	if err != nil {
-		switch err {
-		case services.ErrInsufficientFunds:
-			c.JSON(http.StatusPaymentRequired, utils.ErrorResponse("Insufficient funds", err.Error()))
-		case services.ErrInvalidCard:
-			c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid card details", err.Error()))
-		case services.ErrCardExpired:
-			c.JSON(http.StatusBadRequest, utils.ErrorResponse("Card expired", err.Error()))
-		case services.ErrPaymentDeclined:
-			c.JSON(http.StatusPaymentRequired, utils.ErrorResponse("Payment declined", err.Error()))
-		default:
-			c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Payment processing failed", err.Error()))
-		}
+		c.JSON(http.StatusInternalServerError, utils.ErrorResponse("Payment processing failed", err.Error()))
 		return
 	}
 
-	response := &models.PaymentResponse{
-		ID:            payment.ID,
-		Status:        payment.Status,
-		Amount:        payment.Amount,
-		Currency:      payment.Currency,
-		TransactionID: payment.TransactionID,
-		Message:       "Payment processed successfully",
-		CreatedAt:     payment.CreatedAt,
+	response := &models.Payment{
+		PaymentID: payment.PaymentID,
+		OrderID:   payment.OrderID,
+		Status:    payment.Status,
+		Price:     payment.Price,
+		Date:      payment.Date,
 	}
 
 	c.JSON(http.StatusOK, utils.SuccessResponse("Payment processed", response))
@@ -102,8 +90,8 @@ func (h *PaymentHandler) GetPaymentStatus(c *gin.Context) {
 	}
 
 	statusResponse := gin.H{
-		"id":     payment.ID,
-		"status": payment.Status,
+		"payment_id": payment.PaymentID,
+		"status":     payment.Status,
 	}
 
 	c.JSON(http.StatusOK, utils.SuccessResponse("Payment status retrieved", statusResponse))
@@ -151,12 +139,11 @@ func (h *PaymentHandler) RefundPayment(c *gin.Context) {
 }
 
 func (h *PaymentHandler) validatePaymentRequest(req *models.PaymentRequest) error {
-
+	// Add any custom validation logic here if needed
 	return nil
 }
 
 func (h *PaymentHandler) OTP(c *gin.Context) {
-
 	if err := c.ShouldBindJSON(&models.Req); err != nil {
 		c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid email", err.Error()))
 		return
@@ -174,7 +161,6 @@ func (h *PaymentHandler) ValidateOTP(c *gin.Context) {
 	}
 
 	if ok := h.paymentService.VerifyOTP(req.OrderID, req.OTP); !ok {
-
 		c.JSON(http.StatusUnauthorized, utils.ErrorResponse("Invalid OTP", "The OTP provided is incorrect or expired. Please try again."))
 		return
 	}
