@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/IBM/sarama"
 	"payment-gateway/internal/models"
+
+	"github.com/IBM/sarama"
 )
 
 type Consumer struct {
@@ -25,7 +26,7 @@ func NewConsumer(brokers []string, groupID string) (*Consumer, error) {
 		return nil, fmt.Errorf("failed to create consumer group: %w", err)
 	}
 
-	topics := []string{"payment-events", "payment-webhooks", "payment-notifications"}
+	topics := []string{"payment-webhooks", "payment-notifications"}
 
 	return &Consumer{
 		consumer: consumer,
