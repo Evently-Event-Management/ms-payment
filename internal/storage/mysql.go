@@ -83,12 +83,12 @@ func (s *MySQLStore) SavePayment(payment *models.Payment) error {
 
 	query := `
     INSERT INTO payments (
-        payment_id, order_id, status, price, date
-    ) VALUES (?, ?, ?, ?, ?)
+        payment_id, order_id, status, price, created_date, url
+    ) VALUES (?, ?, ?, ?, ?, ?)
     `
 
 	_, err := s.db.Exec(query,
-		payment.PaymentID, payment.OrderID, payment.Status, payment.Price, payment.Date,
+		payment.PaymentID, payment.OrderID, payment.Status, payment.Price, payment.CreatedDate, payment.URL,
 	)
 
 	if err != nil {
@@ -105,13 +105,13 @@ func (s *MySQLStore) GetPayment(id string) (*models.Payment, error) {
 	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Fetching payment %s", id))
 
 	query := `
-    SELECT payment_id, order_id, status, price, date
+    SELECT payment_id, order_id, status, price, created_date, url
     FROM payments WHERE payment_id = ?
     `
 
 	payment := &models.Payment{}
 	err := s.db.QueryRow(query, id).Scan(
-		&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.Date,
+		&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.CreatedDate, &payment.URL,
 	)
 
 	if err != nil {
@@ -133,12 +133,12 @@ func (s *MySQLStore) UpdatePayment(payment *models.Payment) error {
 
 	query := `
     UPDATE payments SET
-        order_id = ?, status = ?, price = ?, date = ?
+        order_id = ?, status = ?, price = ?, url = ?
     WHERE payment_id = ?
     `
 
 	_, err := s.db.Exec(query,
-		payment.OrderID, payment.Status, payment.Price, payment.Date, payment.PaymentID,
+		payment.OrderID, payment.Status, payment.Price, payment.URL, payment.PaymentID,
 	)
 
 	if err != nil {
@@ -151,18 +151,18 @@ func (s *MySQLStore) UpdatePayment(payment *models.Payment) error {
 }
 
 // Update ListPayments to match new fields
-func (s *MySQLStore) ListPayments(orderID string, limit, offset int) ([]*models.Payment, error) {
-	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Listing payments for order %s (limit: %d, offset: %d)", orderID, limit, offset))
+func (s *MySQLStore) ListPayments(merchantID string, limit, offset int) ([]*models.Payment, error) {
+	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Listing payments for order %s (limit: %d, offset: %d)", merchantID, limit, offset))
 
 	query := `
-    SELECT payment_id, order_id, status, price, date
+    SELECT payment_id, order_id, status, price, created_date, url
     FROM payments 
     WHERE order_id = ? 
-    ORDER BY date DESC 
+    ORDER BY created_date DESC 
     LIMIT ? OFFSET ?
     `
 
-	rows, err := s.db.Query(query, orderID, limit, offset)
+	rows, err := s.db.Query(query, merchantID, limit, offset)
 	if err != nil {
 		s.log.Error("DATABASE", fmt.Sprintf("Failed to list payments: %s", err.Error()))
 		return nil, fmt.Errorf("failed to list payments: %w", err)
@@ -173,7 +173,7 @@ func (s *MySQLStore) ListPayments(orderID string, limit, offset int) ([]*models.
 	for rows.Next() {
 		payment := &models.Payment{}
 		err := rows.Scan(
-			&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.Date,
+			&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.CreatedDate, &payment.URL,
 		)
 
 		if err != nil {
@@ -189,7 +189,7 @@ func (s *MySQLStore) ListPayments(orderID string, limit, offset int) ([]*models.
 		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
-	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Listed %d payments for order %s", len(payments), orderID))
+	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Listed %d payments for order %s", len(payments), merchantID))
 	return payments, nil
 }
 
@@ -203,16 +203,16 @@ func (s *MySQLStore) HealthCheck() error {
 }
 
 func (s *MySQLStore) GetTicketByOrderID(OrderID string) (*models.Payment, error) {
-	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Fetching payment %s", OrderID))
+	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Fetching payment for OrderID %s", OrderID))
 
 	query := `
-    SELECT payment_id, order_id, status, price, date
+    SELECT payment_id, order_id, status, price, created_date, url
     FROM payments WHERE order_id = ?
     `
 
 	payment := &models.Payment{}
 	err := s.db.QueryRow(query, OrderID).Scan(
-		&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.Date,
+		&payment.PaymentID, &payment.OrderID, &payment.Status, &payment.Price, &payment.CreatedDate, &payment.URL,
 	)
 
 	if err != nil {
@@ -224,6 +224,77 @@ func (s *MySQLStore) GetTicketByOrderID(OrderID string) (*models.Payment, error)
 		return nil, fmt.Errorf("failed to get payment: %w", err)
 	}
 
-	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Payment %s fetched successfully for OrderID %s", OrderID, OrderID))
+	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Payment %s fetched successfully for OrderID %s", payment.PaymentID, OrderID))
 	return payment, nil
+}
+
+// SaveOrder saves an order to the database
+func (s *MySQLStore) SaveOrder(order *models.Order) error {
+	s.log.LogDatabase("INSERT", "mysql", fmt.Sprintf("Saving order %s", order.OrderID))
+
+	query := `
+    INSERT INTO orders (order_id, user_id, session_id, seat_ids, status, price, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    `
+
+	// Convert seat_ids slice to a string representation for storage
+	// This is simplified - in a real implementation you might want to use proper JSON serialization
+	seatIDsStr := fmt.Sprintf("%v", order.SeatIDs)
+
+	_, err := s.db.Exec(query,
+		order.OrderID,
+		order.UserID,
+		order.SessionID,
+		seatIDsStr,
+		order.Status,
+		order.Price,
+		order.CreatedAt,
+	)
+
+	if err != nil {
+		s.log.Error("DATABASE", fmt.Sprintf("Failed to save order %s: %s", order.OrderID, err.Error()))
+		return fmt.Errorf("failed to save order: %w", err)
+	}
+
+	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Order %s saved successfully", order.OrderID))
+	return nil
+}
+
+// GetOrder retrieves an order from the database by ID
+func (s *MySQLStore) GetOrder(orderID string) (*models.Order, error) {
+	s.log.LogDatabase("SELECT", "mysql", fmt.Sprintf("Fetching order %s", orderID))
+
+	query := `
+    SELECT order_id, user_id, session_id, seat_ids, status, price, created_at
+    FROM orders WHERE order_id = ?
+    `
+
+	order := &models.Order{}
+	var seatIDsStr string
+
+	err := s.db.QueryRow(query, orderID).Scan(
+		&order.OrderID,
+		&order.UserID,
+		&order.SessionID,
+		&seatIDsStr,
+		&order.Status,
+		&order.Price,
+		&order.CreatedAt,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			s.log.LogDatabase("NOT_FOUND", "mysql", fmt.Sprintf("Order not found: %s", orderID))
+			return nil, fmt.Errorf("order not found")
+		}
+		s.log.Error("DATABASE", fmt.Sprintf("Failed to get order %s: %s", orderID, err.Error()))
+		return nil, fmt.Errorf("failed to get order: %w", err)
+	}
+
+	// This is a simplified parsing of seat_ids from string
+	// In a real implementation, you'd want proper JSON deserialization
+	fmt.Sscanf(seatIDsStr, "%v", &order.SeatIDs)
+
+	s.log.LogDatabase("SUCCESS", "mysql", fmt.Sprintf("Order %s fetched successfully", orderID))
+	return order, nil
 }

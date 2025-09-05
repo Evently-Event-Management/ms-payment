@@ -38,7 +38,7 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka_pay:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
@@ -54,26 +54,6 @@ services:
     volumes:
       - redis_data:/data
 
-  payment-gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: payment-gateway
-    depends_on:
-      - kafka
-      - redis
-      - mysql
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_BROKERS: kafka:9092
-      KAFKA_ENABLED: "true"
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USERNAME: payment_user
-      DB_PASSWORD: payment_pass
-      DB_NAME: payment_gateway
-    restart: unless-stopped
 
 volumes:
   redis_data:

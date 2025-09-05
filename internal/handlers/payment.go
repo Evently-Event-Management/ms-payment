@@ -42,11 +42,11 @@ func (h *PaymentHandler) ProcessPayment(c *gin.Context) {
 	}
 
 	response := &models.Payment{
-		PaymentID: payment.PaymentID,
-		OrderID:   payment.OrderID,
-		Status:    payment.Status,
-		Price:     payment.Price,
-		Date:      payment.Date,
+		PaymentID:   payment.PaymentID,
+		OrderID:     payment.OrderID,
+		Status:      payment.Status,
+		CreatedDate: payment.CreatedDate,
+		URL:         payment.URL,
 	}
 
 	c.JSON(http.StatusOK, utils.SuccessResponse("Payment processed", response))
@@ -98,15 +98,28 @@ func (h *PaymentHandler) GetPaymentStatus(c *gin.Context) {
 }
 
 func (h *PaymentHandler) RefundPayment(c *gin.Context) {
-	paymentID := c.Param("id")
-	if paymentID == "" {
-		c.JSON(http.StatusBadRequest, utils.ErrorResponse("Payment ID is required", ""))
-		return
-	}
-
 	var req models.RefundRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid refund request", err.Error()))
+		return
+	}
+
+	// Get orderID from request body
+	orderID := req.OrderID
+	if orderID == "" {
+		// If orderID is not in the body, try to get it from URL params
+		orderID = c.Param("order_id")
+	}
+
+	if orderID == "" {
+		c.JSON(http.StatusBadRequest, utils.ErrorResponse("Order ID is required", ""))
+		return
+	}
+
+	// Fetch payment by order ID
+	payment, err := h.paymentService.GetPaymentByOrderID(c.Request.Context(), orderID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, utils.ErrorResponse("Payment not found for this order", err.Error()))
 		return
 	}
 
@@ -120,7 +133,8 @@ func (h *PaymentHandler) RefundPayment(c *gin.Context) {
 		refundAmount = &amount
 	}
 
-	payment, err := h.paymentService.RefundPayment(c.Request.Context(), paymentID, refundAmount, req.Reason)
+	// Use the payment ID from the fetched payment
+	refundedPayment, err := h.paymentService.RefundPayment(c.Request.Context(), payment.PaymentID, refundAmount, req.Reason)
 	if err != nil {
 		switch err {
 		case services.ErrPaymentNotFound:
@@ -135,35 +149,10 @@ func (h *PaymentHandler) RefundPayment(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, utils.SuccessResponse("Refund processed successfully", payment))
+	c.JSON(http.StatusOK, utils.SuccessResponse("Refund processed successfully", refundedPayment))
 }
 
 func (h *PaymentHandler) validatePaymentRequest(req *models.PaymentRequest) error {
 	// Add any custom validation logic here if needed
 	return nil
-}
-
-func (h *PaymentHandler) OTP(c *gin.Context) {
-	if err := c.ShouldBindJSON(&models.Req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid email", err.Error()))
-		return
-	}
-
-	h.paymentService.OtpSender(models.Req.Email)
-	c.JSON(http.StatusOK, utils.SuccessResponse("OTP sent Successfully.", "TTl= 5min"))
-}
-
-func (h *PaymentHandler) ValidateOTP(c *gin.Context) {
-	var req models.ValidateOTPRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, utils.ErrorResponse("Invalid OTP request", err.Error()))
-		return
-	}
-
-	if ok := h.paymentService.VerifyOTP(req.OrderID, req.OTP); !ok {
-		c.JSON(http.StatusUnauthorized, utils.ErrorResponse("Invalid OTP", "The OTP provided is incorrect or expired. Please try again."))
-		return
-	}
-
-	c.JSON(http.StatusOK, utils.SuccessResponse("OTP validated successfully", nil))
 }

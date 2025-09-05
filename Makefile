@@ -1,4 +1,4 @@
-.PHONY: build run test clean docker-build docker-run dev dev-mock run-mock docker-check docker-fix mysql-setup mysql-init mysql-logs dev-with-db run-with-db fmt lint mocks install-dev help
+.PHONY: build run test clean docker-build docker-run dev dev-mock run-mock docker-check docker-fix mysql-setup mysql-init mysql-logs dev-with-db run-with-db fmt lint mocks install-dev help migrate
 
 mysql-setup:
 	@echo "🗄️  Setting up MySQL database..."
@@ -12,6 +12,11 @@ mysql-init:
 	@echo "🗄️  Initializing MySQL with sample data..."
 	@docker-compose exec mysql mysql -uroot -prootpassword payment_gateway < scripts/mysql-init.sql
 	@echo "✅ MySQL initialized with sample data"
+
+migrate:
+	@echo "🗄️  Running database migrations..."
+	@go run cmd/migrate/main.go -env dev
+	@echo "✅ Database migrations completed"
 
 mysql-logs:
 	@echo "📋 MySQL logs:"

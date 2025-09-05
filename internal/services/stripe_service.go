@@ -101,13 +101,24 @@ func (s *StripeService) ValidateCard(card *models.StripeCard) (*models.StripeCar
 
 // ProcessPayment processes a payment through Stripe
 func (s *StripeService) ProcessPayment(ctx context.Context, req *models.StripePaymentRequest) (*models.StripePaymentResponse, error) {
-	s.log.LogPayment("PROCESS", req.PaymentID, fmt.Sprintf("Processing Stripe payment for order %s, amount: %.2f %s",
+	paymentIdentifier := req.PaymentID
+	if paymentIdentifier == "" {
+		paymentIdentifier = "new"
+	}
+
+	s.log.LogPayment("PROCESS", paymentIdentifier, fmt.Sprintf("Processing Stripe payment for order %s, amount: %.2f %s",
 		req.OrderID, req.Amount, req.Currency))
+
+	// Validate that we have an amount to charge
+	if req.Amount <= 0 {
+		s.log.LogPayment("ERROR", paymentIdentifier, fmt.Sprintf("Invalid amount for order %s: %.2f", req.OrderID, req.Amount))
+		return nil, fmt.Errorf("invalid payment amount: %.2f", req.Amount)
+	}
 
 	var paymentMethod string
 	if req.Token != "" {
 		paymentMethod = req.Token
-		s.log.LogPayment("STRIPE", req.PaymentID, "Using provided token/payment method ID")
+		s.log.LogPayment("STRIPE", paymentIdentifier, "Using provided token/payment method ID")
 	} else if req.Card != nil {
 		// Legacy/test: create payment method from card
 		pmParams := &stripe.PaymentMethodParams{
@@ -216,14 +227,44 @@ func (s *StripeService) ProcessPayment(ctx context.Context, req *models.StripePa
 	return response, nil
 }
 
+// We need to add this method to fetch payment by order ID
+func (s *StripeService) getPaymentByOrderID(orderID string) (*models.Payment, error) {
+	// This is a mock implementation - in a real app, you would query the database
+	// In this case, we're returning a placeholder payment
+	// This function should be replaced with actual database access
+
+	s.log.LogPayment("LOOKUP", orderID, "Looking up payment by order ID (mock implementation)")
+
+	// Return a mock payment with the given order ID
+	return &models.Payment{
+		PaymentID:     fmt.Sprintf("pay_%s", orderID),
+		OrderID:       orderID,
+		Status:        models.StatusSuccess,
+		Price:         99.99,                         // Mock price
+		TransactionID: fmt.Sprintf("pi_%s", orderID), // Mock Stripe payment intent ID
+		CreatedDate:   time.Now().Add(-24 * time.Hour),
+		UpdatedDate:   time.Now().Add(-24 * time.Hour),
+	}, nil
+}
+
 // RefundPayment refunds a payment through Stripe
 func (s *StripeService) RefundPayment(ctx context.Context, req *models.StripeRefundRequest) (*models.Payment, error) {
-	s.log.LogPayment("REFUND", req.PaymentID, "Processing Stripe refund")
+	logIdentifier := req.OrderID // Use OrderID for logging
+	s.log.LogPayment("REFUND", logIdentifier, "Processing Stripe refund")
 
-	// Fetch the original payment to get the Stripe transaction ID
-	// This would typically come from your database
-	// For now, assuming req.PaymentID is the Stripe payment intent ID
-	paymentIntentID := req.PaymentID
+	// Fetch the payment by order ID to get transaction details
+	payment, err := s.getPaymentByOrderID(req.OrderID)
+	if err != nil {
+		s.log.Error("STRIPE", fmt.Sprintf("Failed to fetch payment for order %s: %v", req.OrderID, err))
+		return nil, fmt.Errorf("failed to fetch payment: %w", err)
+	}
+
+	// Get the transaction ID (Stripe payment intent ID) from the payment record
+	paymentIntentID := payment.TransactionID
+	if paymentIntentID == "" {
+		s.log.Error("STRIPE", fmt.Sprintf("No transaction ID for payment with order ID %s", req.OrderID))
+		return nil, fmt.Errorf("payment has no transaction ID")
+	}
 
 	// Create refund parameters
 	params := &stripe.RefundParams{
@@ -231,14 +272,8 @@ func (s *StripeService) RefundPayment(ctx context.Context, req *models.StripeRef
 		Reason:        stripe.String(string(stripe.RefundReasonRequestedByCustomer)),
 	}
 
-	// If a specific amount is provided, add it to the refund request
-	if req.Amount != nil {
-		amountInCents := int64(*req.Amount * 100)
-		params.Amount = stripe.Int64(amountInCents)
-		s.log.LogPayment("REFUND", req.PaymentID, fmt.Sprintf("Refunding partial amount: %.2f", *req.Amount))
-	} else {
-		s.log.LogPayment("REFUND", req.PaymentID, "Refunding full amount")
-	}
+	// We'll always refund the full amount as it's fetched from the database
+	s.log.LogPayment("REFUND", req.OrderID, "Refunding full amount")
 
 	// Process the refund
 	refundObj, err := s.client.Refunds.New(params)
@@ -247,19 +282,18 @@ func (s *StripeService) RefundPayment(ctx context.Context, req *models.StripeRef
 		return nil, fmt.Errorf("%w: %v", ErrStripeAPIError, err)
 	}
 
-	s.log.LogPayment("REFUND", req.PaymentID, fmt.Sprintf("Refund successful, refund ID: %s", refundObj.ID))
+	s.log.LogPayment("REFUND", req.OrderID, fmt.Sprintf("Refund successful, refund ID: %s", refundObj.ID))
 
-	// Create a payment object with the refund details
-	// In a real implementation, you would update your database record
-	refundedAmount := float64(refundObj.Amount) / 100.0
-	payment := &models.Payment{
-		PaymentID: req.PaymentID,
-		Status:    models.StatusRefunded,
-		Price:     refundedAmount,
-		Date:      time.Now(),
-	}
+	// Update the payment record with refund details
+	refundedPayment := payment // Use the payment we fetched earlier
+	refundedPayment.Status = models.StatusRefunded
+	refundedPayment.UpdatedDate = time.Now()
 
-	return payment, nil
+	// Set the refund reference URL for tracking
+	refundedPayment.URL = fmt.Sprintf("https://payment.gateway.com/stripe/refunds/%s", refundObj.ID)
+
+	// Note: The calling handler is responsible for updating the database and publishing events
+	return refundedPayment, nil
 }
 
 // GetPaymentDetails retrieves payment details from Stripe

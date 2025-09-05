@@ -62,7 +62,7 @@ func main() {
 	log.LogKafka("INIT", "producer", "Kafka producer initialized successfully")
 
 	log.LogProcess("KAFKA", "Initializing Kafka consumer...")
-	kafkaConsumer, err := kafka.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.GroupID)
+	kafkaConsumer, err := kafka.NewOrderConsumer(cfg.Kafka.Brokers, cfg.Kafka.GroupID, store)
 	if err != nil {
 		log.Fatal("KAFKA", "Failed to create Kafka consumer: "+err.Error())
 	}
@@ -99,13 +99,13 @@ func main() {
 
 	// Initialize handlers
 	paymentHandler := handlers.NewPaymentHandler(paymentService)
-	stripeHandler := handlers.NewStripeHandler(stripeService, paymentService)
+	stripeHandler := handlers.NewStripeHandler(stripeService, paymentService, kafkaProducer)
 	log.LogProcess("HANDLER", "All handlers initialized")
 
 	// Start Kafka consumer in background
 	go func() {
 		log.LogKafka("START", "consumer", "Starting Kafka consumer goroutine")
-		if err := kafkaConsumer.ConsumePayments(context.Background(), paymentService.ProcessPaymentEvent); err != nil {
+		if err := kafkaConsumer.ConsumeOrders(context.Background(), paymentService.ProcessOrderEvent); err != nil {
 			log.Error("KAFKA", "Consumer error: "+err.Error())
 		}
 	}()
@@ -176,14 +176,12 @@ func setupRouter(paymentHandler *handlers.PaymentHandler, stripeHandler *handler
 	// API routes
 	v1 := router.Group("/api/v1")
 	{
+		// Payment routes
 		payments := v1.Group("/payments")
 		{
 			payments.POST("/process", paymentHandler.ProcessPayment)
-			payments.GET("/:id", paymentHandler.GetPayment)
-			payments.GET("/:id/status", paymentHandler.GetPaymentStatus)
-			payments.POST("/:id/refund", paymentHandler.RefundPayment)
-			payments.POST("/OTP", paymentHandler.OTP)
-			payments.POST("/validate", paymentHandler.ValidateOTP)
+			payments.GET("/:id", paymentHandler.GetPaymentStatus)
+			payments.POST("/refund", paymentHandler.RefundPayment) // New route for refunding by order_id
 		}
 
 		// Stripe-specific routes
