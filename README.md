@@ -1,97 +1,149 @@
-# Payment Gateway Mock Service
+# Payment Gateway Service with Stripe Integration
 
-A comprehensive mock payment gateway built in Go with proper error handling, Kafka integration, and load handling capabilities.
+A comprehensive payment gateway built in Go with Stripe integration, proper error handling, Kafka integration, and load handling capabilities.
 
 ## Features
 
 - **RESTful API** for payment processing
+- **Stripe Integration** for real payment processing
+- **Credit Card Validation** for validating cards before processing
 - **Kafka Integration** for event streaming
 - **Proper Error Handling** with detailed error responses
 - **Load Handling** with rate limiting and graceful shutdown
-- **Mock Payment Processing** with realistic success/failure scenarios
+- **Payment Processing** with Stripe
 - **Refund Support** with partial and full refund capabilities
 - **Card Validation** with expiry and format checks
 - **Transaction Tracking** with unique IDs
 - **Concurrent Processing** with goroutines
 - **Docker Support** with multi-stage builds
+- **OTP Verification** for secure payments
 
 ## API Endpoints
 
-### Process Payment
-\`\`\`
-POST /api/v1/payments/process
-\`\`\`
+### Standard Payment API
+```
+POST /api/v1/payments/process        # Process a regular payment
+GET /api/v1/payments/{id}            # Get payment details
+GET /api/v1/payments/{id}/status     # Get payment status
+POST /api/v1/payments/{id}/refund    # Refund a payment
+POST /api/v1/payments/OTP            # Generate OTP for payment verification
+POST /api/v1/payments/validate       # Validate OTP
+```
 
-### Get Payment
-\`\`\`
-GET /api/v1/payments/{id}
-\`\`\`
-
-### Get Payment Status
-\`\`\`
-GET /api/v1/payments/{id}/status
-\`\`\`
-
-### Refund Payment
-\`\`\`
-POST /api/v1/payments/{id}/refund
-\`\`\`
+### Stripe API
+```
+POST /api/v1/stripe/validate-card    # Validate credit card
+POST /api/v1/stripe/payment          # Process payment with Stripe
+POST /api/v1/stripe/refund           # Refund a Stripe payment
+GET /api/v1/stripe/payment/{id}      # Get Stripe payment details
+POST /api/v1/stripe/webhook          # Handle Stripe webhook events
+```
 
 ### Health Check
-\`\`\`
+```
 GET /health
-\`\`\`
+```
 
 ## Quick Start
 
+### Prerequisites
+- Go 1.18 or later
+- MySQL database
+- Redis server
+- Kafka (for event processing)
+- Stripe account (for payment processing)
+
+### Setup
+
+1. Clone the repository:
+   ```
+   git clone https://github.com/Evently-Event-Management/ms-payment.git
+   cd ms-payment
+   ```
+
+2. Set up environment variables:
+   ```
+   cp .env.example .env
+   ```
+   
+3. Edit the `.env` file and add your configuration details, including your Stripe API key.
+
+4. Install dependencies:
+   ```
+   go mod download
+   ```
+
+5. Run the application:
+   ```
+   go run main.go
+   ```
+
 ### Using Docker Compose (Recommended)
-\`\`\`bash
+```bash
 # Start all services (Kafka, Zookeeper, Redis, Payment Gateway)
 make docker-run
 
 # Or manually
 docker-compose up --build
-\`\`\`
+```
 
 ### Local Development
-\`\`\`bash
+```bash
 # Start Kafka and dependencies
 make kafka-up
 
 # In another terminal, run the application
 make run
-\`\`\`
+```
 
 ## Example Usage
 
-### Process a Payment
-\`\`\`bash
-curl -X POST http://localhost:8080/api/v1/payments/process \
+### Validate a Credit Card
+```bash
+curl -X POST http://localhost:8085/api/v1/stripe/validate-card \
   -H "Content-Type: application/json" \
   -d '{
-    "merchant_id": "merchant_123",
-    "amount": 99.99,
-    "currency": "USD",
-    "payment_method": "card",
-    "card_number": "4111111111111111",
-    "card_holder_name": "John Doe",
-    "expiry_month": 12,
-    "expiry_year": 2025,
-    "cvv": "123",
-    "description": "Test payment"
+    "card": {
+      "number": "4242424242424242",
+      "exp_month": "12",
+      "exp_year": "2025",
+      "cvc": "123"
+    }
   }'
-\`\`\`
+```
+
+### Process a Payment with Stripe
+```bash
+curl -X POST http://localhost:8085/api/v1/stripe/payment \
+  -H "Content-Type: application/json" \
+  -d '{
+    "payment_id": "pay_123456",
+    "order_id": "order_123456",
+    "amount": 99.99,
+    "currency": "usd",
+    "description": "Test payment",
+    "card": {
+      "number": "4242424242424242",
+      "exp_month": "12",
+      "exp_year": "2025",
+      "cvc": "123",
+      "name": "John Doe"
+    }
+  }'
+```
 
 ### Check Payment Status
-\`\`\`bash
-curl http://localhost:8080/api/v1/payments/{payment_id}/status
-\`\`\`
+```bash
+curl http://localhost:8085/api/v1/payments/{payment_id}/status
+```
 
 ## Test Cards
 
-- **Success**: `4111111111111111`
-- **Failure**: `4000000000000002`
-- **Insufficient Funds**: `4000000000000010`
+For testing with Stripe, you can use these test cards:
+
+- **Success**: `4242424242424242`
+- **Requires Authentication**: `4000002500003155`
+- **Declined**: `4000000000000002`
 
 ## Architecture
 
