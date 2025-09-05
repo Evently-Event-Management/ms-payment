@@ -10,4 +10,8 @@ type Store interface {
 	UpdatePayment(payment *models.Payment) error
 	ListPayments(merchantID string, limit, offset int) ([]*models.Payment, error)
 	GetTicketByOrderID(OrderID string) (*models.Payment, error)
+
+	// Order related operations
+	SaveOrder(order *models.Order) error
+	GetOrder(orderID string) (*models.Order, error)
 }
