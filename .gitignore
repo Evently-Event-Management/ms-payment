@@ -8,7 +8,8 @@
 *.so
 *.dylib
 *.test
-
+.env.example
+docs/
 # Output of the go coverage tool
 *.out
 
