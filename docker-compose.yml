@@ -29,7 +29,7 @@ services:
 
   kafka:
     image: confluentinc/cp-kafka:6.2.9
-    container_name: kafka
+    container_name: kafka_pay
     depends_on:
       - zookeeper
     ports:

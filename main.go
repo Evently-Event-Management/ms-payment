@@ -2,14 +2,16 @@ package main
 
 import (
 	"context"
-	"github.com/go-redis/redis/v8"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
+	"github.com/joho/godotenv"
+	"github.com/stripe/stripe-go/v82"
+
 	"payment-gateway/internal/config"
 	"payment-gateway/internal/handlers"
 	"payment-gateway/internal/kafka"
@@ -18,6 +20,8 @@ import (
 	rediswrap "payment-gateway/internal/redis"
 	"payment-gateway/internal/services"
 	"payment-gateway/internal/storage"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Global logger instance
@@ -26,10 +30,12 @@ var log *logger.Logger
 func main() {
 	log = logger.NewLogger()
 	defer log.Close()
-	//err := godotenv.Load()
-	//if err != nil {
-	//	log.Fatal("ENV", "Error loading .env file")
-	//}
+
+	// Load environment variables from .env file
+	if err := godotenv.Load(); err != nil {
+		log.Warn("ENV", "Error loading .env file, using environment variables")
+	}
+
 	log.LogProcess("STARTUP", "Payment Gateway starting up...")
 	log.Info("SYSTEM", "Initializing components...")
 
@@ -68,13 +74,33 @@ func main() {
 	})
 
 	log.LogProcess("SERVICE", " Redis connection successful")
+
+	// Initialize Stripe with API key
+	stripeKey := os.Getenv("STRIPE_SECRET_KEY")
+	if stripeKey == "" {
+		log.Warn("STRIPE", "STRIPE_SECRET_KEY environment variable not set")
+		log.Warn("STRIPE", "Please set a valid Stripe API key in your .env file")
+		// Don't set a default key here, let the service fail if no key is provided
+	} else {
+		stripe.Key = stripeKey
+		log.LogProcess("STRIPE", "Stripe API initialized with key")
+	}
+
 	// Initialize services
 	paymentService := services.NewPaymentService(store, kafkaProducer, log, rediswrap.NewRedis(redisClient))
 	log.LogProcess("SERVICE", "Payment service initialized")
 
+	// Initialize Stripe service
+	stripeService, err := services.NewStripeService(log)
+	if err != nil {
+		log.Fatal("STRIPE", "Failed to initialize Stripe service: "+err.Error())
+	}
+	log.LogProcess("SERVICE", "Stripe service initialized")
+
 	// Initialize handlers
 	paymentHandler := handlers.NewPaymentHandler(paymentService)
-	log.LogProcess("HANDLER", "Payment handler initialized")
+	stripeHandler := handlers.NewStripeHandler(stripeService, paymentService)
+	log.LogProcess("HANDLER", "All handlers initialized")
 
 	// Start Kafka consumer in background
 	go func() {
@@ -85,12 +111,12 @@ func main() {
 	}()
 
 	// Setup router
-	router := setupRouter(paymentHandler)
+	router := setupRouter(paymentHandler, stripeHandler)
 	log.LogProcess("ROUTER", "HTTP router configured")
 
 	// Create server
 	srv := &http.Server{
-		Addr:         cfg.Server.Port,
+		Addr:         ":8085",
 		Handler:      router,
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
@@ -127,7 +153,7 @@ func main() {
 	log.Info("SHUTDOWN", "✅ Payment Gateway shutdown completed successfully")
 }
 
-func setupRouter(paymentHandler *handlers.PaymentHandler) *gin.Engine {
+func setupRouter(paymentHandler *handlers.PaymentHandler, stripeHandler *handlers.StripeHandler) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 
@@ -158,6 +184,16 @@ func setupRouter(paymentHandler *handlers.PaymentHandler) *gin.Engine {
 			payments.POST("/:id/refund", paymentHandler.RefundPayment)
 			payments.POST("/OTP", paymentHandler.OTP)
 			payments.POST("/validate", paymentHandler.ValidateOTP)
+		}
+
+		// Stripe-specific routes
+		stripe := v1.Group("/stripe")
+		{
+			stripe.POST("/validate-card", stripeHandler.ValidateCard)
+			stripe.POST("/payment", stripeHandler.ProcessPayment)
+			stripe.POST("/refund", stripeHandler.RefundPayment)
+			stripe.GET("/payment/:id", stripeHandler.GetPaymentDetails)
+			stripe.POST("/webhook", stripeHandler.HandleStripeWebhook)
 		}
 	}
 

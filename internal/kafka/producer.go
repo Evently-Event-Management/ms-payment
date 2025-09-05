@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/IBM/sarama"
-	"payment-gateway/internal/models"
 	"payment-gateway/internal/logger"
+	"payment-gateway/internal/models"
+
+	"github.com/IBM/sarama"
 )
 
 type Producer struct {
@@ -15,6 +16,8 @@ type Producer struct {
 	log      *logger.Logger
 }
 
+// NewProducer creates a new Kafka producer.
+// If mockMode is true, no actual Kafka connection is made.
 func NewProducer(brokers []string, mockMode bool, log *logger.Logger) (*Producer, error) {
 	if mockMode {
 		log.LogKafka("MOCK_MODE", "producer", "Running in mock mode - no actual Kafka connection")
@@ -43,6 +46,7 @@ func NewProducer(brokers []string, mockMode bool, log *logger.Logger) (*Producer
 	}, nil
 }
 
+// PublishPaymentEvent publishes a payment event to Kafka.
 func (p *Producer) PublishPaymentEvent(event *models.PaymentEvent) error {
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -50,7 +54,7 @@ func (p *Producer) PublishPaymentEvent(event *models.PaymentEvent) error {
 	}
 
 	topic := p.getTopicForEvent(event.Type)
-	
+
 	if p.mockMode {
 		p.log.LogKafka("MOCK_PUBLISH", topic, fmt.Sprintf("Mock publishing event: %s for payment: %s", event.Type, event.PaymentID))
 		p.log.LogKafka("MOCK_DATA", topic, string(data))
@@ -73,6 +77,7 @@ func (p *Producer) PublishPaymentEvent(event *models.PaymentEvent) error {
 	return nil
 }
 
+// getTopicForEvent maps event types to Kafka topics.
 func (p *Producer) getTopicForEvent(eventType string) string {
 	switch eventType {
 	case "payment.success":
@@ -86,12 +91,13 @@ func (p *Producer) getTopicForEvent(eventType string) string {
 	}
 }
 
+// Close closes the Kafka producer connection.
 func (p *Producer) Close() error {
 	if p.mockMode {
 		p.log.LogKafka("MOCK_CLOSE", "producer", "Mock producer closed")
 		return nil
 	}
-	
+
 	if p.producer != nil {
 		p.log.LogKafka("CLOSING", "producer", "Closing Kafka producer connection")
 		return p.producer.Close()
